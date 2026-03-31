@@ -22,7 +22,8 @@ env:
   CARGO_INCREMENTAL: 0
   # For faster CI
   RUST_LOG: 'off'
-  TURBO_TEAM: 'vercel'
+  # Turborepo remote cache config (TURBO_API and TURBO_TOKEN from runner .bashrc)
+  TURBO_TEAM: 'vtest314-next-e2e-tests'
   TURBO_CACHE: 'remote:rw'
 
 jobs:
@@ -40,12 +41,10 @@ jobs:
         with:
           tool: cargo-codspeed@3.0.5
 
-      - name: Cache on ${{ github.ref_name }}
-        uses: ijjk/rust-cache@a34594c450817c9860143c79797a8770c4e587f5 # turbo-cache-v1.0.9
+      - name: Start sccache
+        uses: ./.github/actions/sccache
         with:
-          save-if: 'true'
-          cache-provider: 'turbo'
-          shared-key: build-turbopack-benchmark-small-apps-${{ hashFiles('.cargo/config.toml') }}
+          turbo-token: ${{ secrets.TURBO_REMOTE_CACHE_TOKEN }}
 
       - name: Install pnpm dependencies
         working-directory: turbopack/benchmark-apps
@@ -80,12 +79,10 @@ jobs:
         with:
           tool: cargo-codspeed@3.0.5
 
-      - name: Cache on ${{ github.ref_name }}
-        uses: ijjk/rust-cache@a34594c450817c9860143c79797a8770c4e587f5 # turbo-cache-v1.0.9
+      - name: Start sccache
+        uses: ./.github/actions/sccache
         with:
-          save-if: 'true'
-          cache-provider: 'turbo'
-          shared-key: build-turbopack-benchmark-analyzer-${{ hashFiles('.cargo/config.toml') }}
+          turbo-token: ${{ secrets.TURBO_REMOTE_CACHE_TOKEN }}
 
       - name: Install pnpm dependencies
         working-directory: turbopack/benchmark-apps
@@ -120,6 +117,11 @@ jobs:
         uses: taiki-e/install-action@7627fb428e65e78e2ec9a24ae5c5bd5f8553f182 # v2.69.10
         with:
           tool: cargo-codspeed@3.0.5
+
+      - name: Start sccache
+        uses: ./.github/actions/sccache
+        with:
+          turbo-token: ${{ secrets.TURBO_REMOTE_CACHE_TOKEN }}
 
       - name: Build the benchmark target(s)
         env:
