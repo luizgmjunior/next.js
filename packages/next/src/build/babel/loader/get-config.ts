@@ -434,12 +434,23 @@ async function getFreshConfig(
     ...loaderOptions.caller,
   }
 
+  // Filter out babel-plugin-react-compiler from user-configured plugins on the server.
+  // The React Compiler must not transform server components — doing so corrupts the
+  // React server runtime and breaks server HMR. Users may have added the plugin to
+  // their .babelrc (the babel-based setup path), so we strip it here for server builds.
+  const userConfigPlugins = loaderOptions.isServer
+    ? (customConfig?.plugins || []).filter((plugin: unknown) => {
+        const pluginName = Array.isArray(plugin) ? plugin[0] : plugin
+        return pluginName !== 'babel-plugin-react-compiler'
+      })
+    : customConfig?.plugins || []
+
   options.plugins = [
     ...(transformMode === 'default'
       ? getPlugins(loaderOptions, cacheCharacteristics)
       : []),
     ...reactCompilerPluginsIfEnabled,
-    ...(customConfig?.plugins || []),
+    ...userConfigPlugins,
   ]
 
   // target can be provided in babelrc
