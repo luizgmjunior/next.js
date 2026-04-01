@@ -5847,6 +5847,11 @@ async function prerenderToStream(
   const { clientModules } = getClientReferenceManifest()
 
   let prerenderStore: PrerenderStore | null = null
+  // Hoisted so the error catch block can re-render complete flight data when
+  // the PPR prerender was aborted (leaving unresolved chunks in the prelude).
+  let finalAttemptRSCPayload: Awaited<ReturnType<typeof getRSCPayload>> | null =
+    null
+  let finalServerReactController = new AbortController()
 
   try {
     if (cacheComponents) {
@@ -6177,7 +6182,6 @@ async function prerenderToStream(
         )
       }
 
-      const finalServerReactController = new AbortController()
       const finalServerRenderController = new AbortController()
 
       const varyParamsAccumulator = createResponseVaryParamsAccumulator()
@@ -6209,7 +6213,7 @@ async function prerenderToStream(
         varyParamsAccumulator,
       }
 
-      const finalAttemptRSCPayload = await workUnitAsyncStorage.run(
+      finalAttemptRSCPayload = await workUnitAsyncStorage.run(
         finalServerPayloadPrerenderStore,
         getRSCPayload,
         tree,
@@ -7096,10 +7100,35 @@ async function prerenderToStream(
         }
       )
 
-      if (shouldGenerateStaticFlightData(workStore)) {
-        const flightData = await streamToBuffer(
-          reactServerPrerenderResult.asStream()
+      // When the server prerender was aborted, the flight data from the PPR
+      // prelude may contain unresolved chunk references (e.g. for async
+      // Suspense content that hadn't completed before the abort). Using that
+      // incomplete data causes errors on the client.
+      // Re-render to produces a complete stream where all content resolves normally.
+      let flightResult: ReactServerPrerenderResult
+      if (finalServerReactController.signal.aborted && finalAttemptRSCPayload) {
+        flightResult = await createReactServerPrerenderResultFromRender(
+          workUnitAsyncStorage.run(
+            prerenderLegacyStore,
+            renderToFlightStream,
+            ComponentMod,
+            finalAttemptRSCPayload,
+            clientModules,
+            {
+              filterStackFrame,
+              onError: serverComponentsErrorHandler,
+            }
+          )
         )
+        reactServerPrerenderResult.consume()
+      } else {
+        // This is intentionally using the readable datastream from the main
+        // render rather than the flight data from the error page render
+        flightResult = reactServerPrerenderResult
+      }
+
+      if (shouldGenerateStaticFlightData(workStore)) {
+        const flightData = await streamToBuffer(flightResult.asStream())
         metadata.flightData = flightData
         await collectSegmentData(
           flightData,
@@ -7111,9 +7140,7 @@ async function prerenderToStream(
         )
       }
 
-      // This is intentionally using the readable datastream from the main
-      // render rather than the flight data from the error page render
-      const flightStream = reactServerPrerenderResult.consumeAsStream()
+      const flightStream = flightResult.consumeAsStream()
 
       return {
         digestErrorsMap: reactServerErrorsByDigest,
