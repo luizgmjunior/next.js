@@ -150,6 +150,39 @@ const sessionId = Math.floor(Number.MAX_SAFE_INTEGER * Math.random())
 
 declare const __next__clear_chunk_cache__: (() => void) | null | undefined
 
+// Each Turbopack server entry chunk (app page, route handler, metadata route,
+// etc.) runs dev-nodejs.ts which assigns its own per-runtime handler to
+// globalThis.__turbopack_server_hmr_apply__. Without intervention, every new
+// chunk load overwrites the previous assignment, so only the last-loaded
+// runtime ever receives HMR updates.
+//
+// We install a property descriptor with a custom setter that accumulates all
+// registered handlers. The getter returns a multicast dispatcher that
+// forwards each HMR update to every live runtime. This ensures a page runtime
+// that was loaded before a metadata route (or any other entry chunk) still
+// receives its HMR updates.
+//
+// The registry is cleared on full cache reset (see clear() below) so stale
+// handlers from deleted/reloaded chunks don't pile up.
+type ServerHmrApplyFn = (update: NodeJsPartialHmrUpdate) => boolean
+const serverHmrApplyHandlers = new Set<ServerHmrApplyFn>()
+const multicastServerHmrApply: ServerHmrApplyFn = (update) => {
+  let applied = false
+  for (const fn of serverHmrApplyHandlers) {
+    try {
+      if (fn(update)) applied = true
+    } catch {}
+  }
+  return applied
+}
+Object.defineProperty(globalThis, '__turbopack_server_hmr_apply__', {
+  get: (): ServerHmrApplyFn => multicastServerHmrApply,
+  set: (fn: ServerHmrApplyFn) => {
+    serverHmrApplyHandlers.add(fn)
+  },
+  configurable: true,
+})
+
 declare const __turbopack_server_hmr_apply__:
   | ((update: NodeJsPartialHmrUpdate) => boolean)
   | undefined
@@ -1854,6 +1887,11 @@ export async function createHotReloaderTurbopack(
         if (typeof __next__clear_chunk_cache__ === 'function') {
           __next__clear_chunk_cache__()
         }
+
+        // Reset the multicast handler registry. All entry chunks are being
+        // cleared from require.cache above so they'll re-register their
+        // __turbopack_server_hmr_apply__ handlers when re-required.
+        serverHmrApplyHandlers.clear()
 
         // Clear all edge contexts
         await clearAllModuleContexts()
